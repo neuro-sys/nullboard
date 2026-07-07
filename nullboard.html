@@ -348,7 +348,7 @@
 		top: 0;
 		right: 0;
 		height: 20px;
-		padding: 5px 6px 7px 30px;
+		padding: 5px 6px 7px 10px;
 		background: linear-gradient(to right, #EAEDF000, #EAEDF0 10px);
 		line-height: calc(20 / 11);
 	}
@@ -378,7 +378,8 @@
 		display: none;
 	}
 
-	.board .head.editing .menu {
+	.board .head.editing .menu,
+	.board .head.editing .sync-board {
 		display: none;
 	}
 
@@ -446,6 +447,13 @@
 		padding: 0 3px;
 	}
 
+	.board .head .sync-board {
+		position: absolute;
+		right: 20px;
+		top: 10px;
+		padding: 0 3px;
+	}
+
 	.board .head .menu .bulk {
 		display: none;
 		opacity: 0;
@@ -458,6 +466,13 @@
 	}
 
 	.board .head .menu:hover .teaser {
+		display: none;
+	}
+
+	/* .sync-board is a sibling of .menu (not nested inside it) so hovering the
+	   sync icon itself doesn't also count as hovering .menu and pop the bulk
+	   menu open - but it should still get out of the way while bulk IS open */
+	.board .head .menu:hover ~ .sync-board {
 		display: none;
 	}
 
@@ -1714,6 +1729,7 @@
 						<a href=# class='add-list'>+ List</a>
 					</div>
 				</div>
+				<a href=# class=sync-board title='Sync from remote'>&#8635;</a>
 			</div>
 			<div class=lists-scroller><div></div></div>
 			<div class=lists>
@@ -3676,13 +3692,16 @@
 			all += `    ID ${board.id}, revision ${board.revision} - "${title}"    \n`;
 		}
 
-		var warning = anyConflict ? ' This will OVERWRITE the existing board(s) with the same ID.' : '';
+		if (! opts.skipConfirm)
+		{
+			var warning = anyConflict ? ' This will OVERWRITE the existing board(s) with the same ID.' : '';
 
-		if (data.length == 1) msg = `Import a board called ${one} ?${warning}`;
-		else                  msg = `About to import the following boards:\n\n${all}\nProceed?${warning}`;
+			if (data.length == 1) msg = `Import a board called ${one} ?${warning}`;
+			else                  msg = `About to import the following boards:\n\n${all}\nProceed?${warning}`;
 
-		if (! confirm(msg))
-			return false;
+			if (! confirm(msg))
+				return false;
+		}
 
 		var to_open = '';
 
@@ -5181,6 +5200,35 @@
 		})
 		.fail(function(xhr){
 			alert('Failed to fetch remote board list: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
+		});
+
+		return false;
+	});
+
+	$('.wrap').on('click', '.board .sync-board', function(){
+
+		var rem = NB.storage.getConfig().backups.agents[1];
+
+		if (! rem.enabled)
+		{
+			alert('Remote backup is not configured. Set it up via Auto-backup first.');
+			return false;
+		}
+
+		if (! NB.board)
+			return false;
+
+		$.ajax({
+			url: rem.conf.base + '/board/' + NB.board.id,
+			type: 'get',
+			headers: { 'X-Access-Token': rem.conf.auth },
+			dataType: 'text'
+		})
+		.done(function(text){
+			importBoard(text, { skipRetitle: true, skipConfirm: true });
+		})
+		.fail(function(xhr){
+			alert('Failed to fetch remote board: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
 		});
 
 		return false;
