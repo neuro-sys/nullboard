@@ -1298,6 +1298,69 @@
 
 	/***/
 
+	.overlay .remote-boards {
+		padding: 20px 40px;
+		min-width: 300px;
+		max-width: 400px;
+		position: relative;
+	}
+
+	.overlay .remote-boards .close {
+		position: absolute;
+		top: 0px;
+		right: 12px;
+		font-size: calc(22rem / 11);
+		color: #000;
+		opacity: 0.3;
+		transition: opacity 300ms;
+	}
+
+	.overlay .remote-boards .close:hover {
+		opacity: 1;
+		transition: opacity 300ms;
+	}
+
+	.overlay .remote-boards h3 {
+		font-size: calc(15rem / 11);
+		font-weight: 500;
+		text-align: center;
+		margin: 20px 0;
+	}
+
+	.overlay .remote-boards .list {
+		margin: 0 -10px;
+	}
+
+	.overlay .remote-boards .board {
+		display: block;
+		padding: 8px 10px;
+		border-top: 1px solid #eee;
+		color: #000;
+	}
+
+	.overlay .remote-boards .board:hover {
+		background: #1489db14;
+		color: #1489db;
+	}
+
+	.overlay .remote-boards .board .title {
+		display: block;
+	}
+
+	.overlay .remote-boards .board .meta {
+		display: block;
+		font-size: calc(10rem / 11);
+		color: #888;
+	}
+
+	.overlay .remote-boards .empty {
+		text-align: center;
+		color: #888;
+		padding: 10px 0 0;
+	}
+
+	/***/
+
 	@media print {
 		.logo, .config,
 		.board .head .teaser,
@@ -1698,6 +1761,15 @@
 			</div>
 
 			<div class=save><a href=# class=check>Check...</a> <a href=# class=ok>Save</a></div>
+		</div>
+
+		<div class=remote-boards>
+			<a href=# class=close>&times;</a>
+
+			<h3>Import Remote</h3>
+
+			<div class=list>
+			</div>
 		</div>
 	</tt>
 
@@ -4284,6 +4356,57 @@
 	}
 
 	/*
+	 *	remote boards picker
+	 */
+	function showRemoteBoardsPicker(list, rem)
+	{
+		var $div = $('tt .remote-boards').clone();
+		var $list = $div.find('.list');
+
+		if (! list.length)
+		{
+			$list.append('<div class=empty>No boards found on the remote.</div>');
+		}
+		else
+		{
+			list.forEach(function(b){
+
+				var current = NB.board && (NB.board.id == b.id);
+				var $a = $('<a href=# class=board><span class=title></span><span class=meta></span></a>');
+
+				$a.find('.title').text(b.title || '(untitled board)');
+				$a.find('.meta').text(`ID ${b.id}, revision ${b.revision}` + (current ? ' (current)' : ''));
+
+				$a.on('click', function(){
+
+					hideOverlay();
+
+					$.ajax({
+						url: rem.conf.base + '/board/' + b.id,
+						type: 'get',
+						headers: { 'X-Access-Token': rem.conf.auth },
+						dataType: 'text'
+					})
+					.done(function(text){
+						importBoard(text);
+					})
+					.fail(function(xhr){
+						alert('Failed to fetch remote board: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
+					});
+
+					return false;
+				});
+
+				$list.append($a);
+			});
+		}
+
+		$div.find('.close').on('click', function(){ hideOverlay(); return false; });
+
+		showOverlay($div);
+	}
+
+	/*
 	 *	license popup
 	 */
 	function formatLicense()
@@ -5036,23 +5159,17 @@
 			return false;
 		}
 
-		if (! NB.board)
-		{
-			alert('Open a board first.');
-			return false;
-		}
-
 		$.ajax({
-			url: rem.conf.base + '/board/' + NB.board.id,
+			url: rem.conf.base + '/boards',
 			type: 'get',
 			headers: { 'X-Access-Token': rem.conf.auth },
-			dataType: 'text'
+			dataType: 'json'
 		})
-		.done(function(text){
-			importBoard(text);
+		.done(function(list){
+			showRemoteBoardsPicker(list, rem);
 		})
 		.fail(function(xhr){
-			alert('Failed to fetch remote board: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
+			alert('Failed to fetch remote board list: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
 		});
 
 		return false;
