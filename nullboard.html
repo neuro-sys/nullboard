@@ -507,6 +507,12 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		min-height: calc( var(--lh) * 1px );
+
+		/* long-press starts a drag (see Drag2) - suppress iOS's native
+		   text-selection callout so it doesn't race with our own timer */
+		-webkit-touch-callout: none;
+		-webkit-user-select: none;
+		user-select: none;
 	}
 
 	/***/
@@ -813,6 +819,12 @@
 		padding-left: 5px;
 		margin-left: -5px;
 		transition: none;
+
+		/* long-press starts a drag (see Drag2) - suppress iOS's native
+		   text-selection callout so it doesn't race with our own timer */
+		-webkit-touch-callout: none;
+		-webkit-user-select: none;
+		user-select: none;
 	}
 
 	.config .bulk .boards a.load-board.active {
@@ -2736,6 +2748,16 @@
 
 <script type="text/javascript">
 
+	// touch events carry coordinates in .touches[0] rather than on the event itself - handles
+	// both jQuery-wrapped events (.originalEvent.touches) and raw native ones (.touches directly,
+	// used by the non-passive touchmove listener registered further down)
+	function dragCoords(ev)
+	{
+		var touches = (ev.originalEvent && ev.originalEvent.touches) || ev.touches;
+		var t = touches && touches[0];
+		return t ? { clientX: t.clientX, clientY: t.clientY } : { clientX: ev.clientX, clientY: ev.clientY };
+	}
+
 	function Drag2()
 	{
 		// config
@@ -2747,6 +2769,7 @@
 
 		// state
 		this.item    = null;
+		this.isTouch = false;
 		this.priming = null;
 		this.primeXY = { x: 0, y: 0 };
 		this.$drag   = null;
@@ -2758,11 +2781,13 @@
 		this.prime = function(item, ev)
 		{
 			var self = this;
+			var xy = dragCoords(ev);
 
 			this.item = item;
+			this.isTouch = !!(ev.originalEvent && ev.originalEvent.touches);
 			this.priming = setTimeout(function(){ self.onPrimed.call(self); }, ev.altKey ? 1 : 500);
-			this.primeXY = { x: ev.clientX, y: ev.clientY };
-			this.mouseEv = ev;
+			this.primeXY = { x: xy.clientX, y: xy.clientY };
+			this.mouseEv = xy;
 		}
 
 		this.cancelPriming = function()
@@ -3023,17 +3048,33 @@
 
 		this.onMouseMove = function(ev)
 		{
-			this.mouseEv = ev;
+			var xy = dragCoords(ev);
+			this.mouseEv = xy;
 
 			if (! this.item)
 				return;
 
 			if (this.priming)
 			{
-				var x = ev.clientX - this.primeXY.x;
-				var y = ev.clientY - this.primeXY.y;
-				if (x*x + y*y > 5*5)
-					this.onPrimed();
+				var x = xy.clientX - this.primeXY.x;
+				var y = xy.clientY - this.primeXY.y;
+				var moved = x*x + y*y;
+
+				// mouse: any real movement promotes into a drag immediately - no competing
+				//   gesture, so instant feedback is correct.
+				// touch: movement before the long-press completes means "let me scroll" -
+				//   cancel priming instead, and never call preventDefault so the browser's
+				//   native scroll proceeds untouched (see the touchmove wiring below).
+				if (this.isTouch)
+				{
+					if (moved > 10*10)
+						this.cancelPriming();
+				}
+				else
+				{
+					if (moved > 5*5)
+						this.onPrimed();
+				}
 			}
 			else
 			{
@@ -3268,7 +3309,10 @@
 		NB.loadDrag.end();
 		$('.note-dragster, .load-dragster').remove(); // in case a drag ghost got orphaned mid-drag
 
-		closeBoard(true);
+		// tear down directly rather than via closeBoard(), which would round-trip conf.board
+		// through null and make setActiveBoard() below always see a "change" and PUT /config -
+		// even when board_id is the same board we're already on (e.g. reopenBoard())
+		$('.wrap .board').remove();
 
 		NB.board = NB.storage.loadBoard(board_id, null);
 		NB.storage.setActiveBoard(board_id);
@@ -3332,7 +3376,7 @@
 		$('.wrap .board .head .text').click();
 	}
 
-	async function saveBoard()
+	function saveBoard()
 	{
 		var $board = $('.wrap .board');
 		var board = Object.assign(new Board(), NB.board); // id, revision & title
@@ -3350,10 +3394,6 @@
 				n.min = $note.hasClass('collapsed');
 			});
 		});
-
-		// pull whatever another device may have pushed since we last synced, so it
-		// lands in local history instead of being silently overwritten by this save
-		applyRemoteRevision( await autoSyncPull(), false );
 
 		NB.storage.saveBoard(board);
 		NB.board = board;
@@ -3657,93 +3697,6 @@
 		}
 
 		if (to_open) openBoard(to_open);
-	}
-
-	/*
-	 *	silent auto-sync with the remote backup, debounced per burst of user activity
-	 */
-	var autoSync = { promise: null, idleTimer: null }; // NB isn't assigned until later in the file
-
-	function fetchRemoteBoard(board_id)
-	{
-		var rem = NB.storage.getConfig().backups.agents[1];
-
-		if (! rem.enabled || ! board_id)
-			return Promise.resolve(null);
-
-		return new Promise(function(resolve){
-
-			$.ajax({
-				url: rem.conf.base + '/board/' + board_id,
-				type: 'get',
-				headers: { 'X-Access-Token': rem.conf.auth },
-				dataType: 'text'
-			})
-			.done(function(text){
-
-				var data;
-
-				try { data = JSON.parse(text); }
-				catch (x) { resolve(null); return; }
-
-				resolve( checkImport(data) ? null : data );
-			})
-			.fail(function(){ resolve(null); });
-		});
-	}
-
-	// merges a fetched remote board into local history; 'refresh' also redraws the open board
-	function applyRemoteRevision(remote, refresh)
-	{
-		if (! remote || remote._applied)
-			return false;
-
-		if (! NB.board || NB.board.id != remote.id)
-			return false;
-
-		var unchanged = (remote.title == NB.board.title) &&
-		                 (JSON.stringify(remote.lists) == JSON.stringify(NB.board.lists));
-
-		if (unchanged)
-			return false;
-
-		remote._applied = true; // never apply the same fetch twice, even if reused across saves
-
-		console.log(`Auto-import: remote content differs (revision ${remote.revision}, we were at ${NB.board.revision}) - pulling it in`);
-
-		NB.storage.saveBoard(remote);
-
-		if (refresh)
-		{
-			if (boardIsIdle())
-				openBoard(remote.id);
-			else
-				console.log('Auto-import: merged into history but skipped the visible refresh - board is not idle (drag active or a field is focused)');
-		}
-
-		return true;
-	}
-
-	// true when nothing is actively dragging or being edited, so it's safe to rebuild the board DOM
-	function boardIsIdle()
-	{
-		if (NB.noteDrag && NB.noteDrag.item) return false;
-		if (NB.loadDrag && NB.loadDrag.item) return false;
-		if ($(document.activeElement).is('.edit')) return false;
-
-		return true;
-	}
-
-	// one remote fetch per burst of activity; reused by every caller until 10s of idle passes
-	function autoSyncPull()
-	{
-		clearTimeout(autoSync.idleTimer);
-		autoSync.idleTimer = setTimeout(function(){ autoSync.promise = null; }, 10000);
-
-		if (! autoSync.promise)
-			autoSync.promise = fetchRemoteBoard(NB.board ? NB.board.id : null);
-
-		return autoSync.promise;
 	}
 
 	/*
@@ -4845,10 +4798,6 @@
 		setRevealState(ev);
 	});
 
-	$(document).on('mousedown keydown', function(){
-		autoSyncPull().then(function(remote){ applyRemoteRevision(remote, true); });
-	});
-
 	$(document).on('keyup', function(ev){
 
 		var raw = ev.originalEvent;
@@ -5110,11 +5059,11 @@
 	});
 
 	//
-	$('.wrap').on('mousedown', '.board .note .text', function(ev){
+	$('.wrap').on('mousedown touchstart', '.board .note .text', function(ev){
 		NB.noteDrag.prime(this.parentNode, ev);
 	});
 
-	$('.config').on('mousedown', 'a.load-board', function(ev){
+	$('.config').on('mousedown touchstart', 'a.load-board', function(ev){
 		if ($('.config a.load-board').length > 1)
 			NB.loadDrag.prime(this, ev);
 	});
@@ -5136,7 +5085,7 @@
 	});
 
 	//
-	$(document).on('mouseup', function(ev){
+	$(document).on('mouseup touchend touchcancel', function(ev){
 		NB.noteDrag.end();
 		NB.loadDrag.end();
 		NB.varAdjust.end();
@@ -5148,6 +5097,17 @@
 		NB.loadDrag.onMouseMove(ev);
 		NB.varAdjust.onMouseMove(ev);
 	});
+
+	// bound natively (not via jQuery) with passive:false so preventDefault() below actually
+	// takes effect - browsers default document-level touchmove listeners to passive otherwise,
+	// which would silently allow the page to scroll underneath an active drag
+	document.addEventListener('touchmove', function(ev){
+		NB.noteDrag.onMouseMove(ev);
+		NB.loadDrag.onMouseMove(ev);
+
+		if (NB.noteDrag.isActive() || NB.loadDrag.isActive())
+			ev.preventDefault();
+	}, { passive: false });
 
 	//
 	$('.config .imp-board').on('click', function(ev){
