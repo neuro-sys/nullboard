@@ -1327,7 +1327,7 @@
 		margin: 20px 0;
 	}
 
-	.overlay .remote-boards .list {
+	.overlay .remote-boards .entries {
 		margin: 0 -10px;
 	}
 
@@ -1768,7 +1768,7 @@
 
 			<h3>Import Remote</h3>
 
-			<div class=list>
+			<div class=entries>
 			</div>
 		</div>
 	</tt>
@@ -4375,7 +4375,7 @@
 	function showRemoteBoardsPicker(list, rem)
 	{
 		var $div = $('tt .remote-boards').clone();
-		var $list = $div.find('.list');
+		var $list = $div.find('.entries');
 
 		if (! list.length)
 		{
