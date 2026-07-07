@@ -3264,6 +3264,10 @@
 	//
 	function openBoard(board_id)
 	{
+		NB.noteDrag.end();
+		NB.loadDrag.end();
+		$('.note-dragster, .load-dragster').remove(); // in case a drag ghost got orphaned mid-drag
+
 		closeBoard(true);
 
 		NB.board = NB.storage.loadBoard(board_id, null);
@@ -3707,8 +3711,18 @@
 
 		NB.storage.saveBoard(remote);
 
-		if (refresh)
+		if (refresh && boardIsIdle())
 			openBoard(remote.id);
+
+		return true;
+	}
+
+	// true when nothing is actively dragging or being edited, so it's safe to rebuild the board DOM
+	function boardIsIdle()
+	{
+		if (NB.noteDrag && NB.noteDrag.item) return false;
+		if (NB.loadDrag && NB.loadDrag.item) return false;
+		if ($(document.activeElement).is('.edit')) return false;
 
 		return true;
 	}
