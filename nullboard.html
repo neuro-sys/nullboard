@@ -3698,8 +3698,6 @@
 		if (! remote || remote._applied)
 			return false;
 
-		remote._applied = true; // never apply the same fetch twice, even if reused across saves
-
 		if (! NB.board || NB.board.id != remote.id)
 			return false;
 
@@ -3709,12 +3707,19 @@
 		if (unchanged)
 			return false;
 
+		remote._applied = true; // never apply the same fetch twice, even if reused across saves
+
 		console.log(`Auto-import: remote content differs (revision ${remote.revision}, we were at ${NB.board.revision}) - pulling it in`);
 
 		NB.storage.saveBoard(remote);
 
-		if (refresh && boardIsIdle())
-			openBoard(remote.id);
+		if (refresh)
+		{
+			if (boardIsIdle())
+				openBoard(remote.id);
+			else
+				console.log('Auto-import: merged into history but skipped the visible refresh - board is not idle (drag active or a field is focused)');
+		}
 
 		return true;
 	}
