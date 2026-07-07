@@ -3741,6 +3741,71 @@
 		if (to_open) openBoard(to_open);
 	}
 
+	// pulls the currently-open board from the remote and applies it if different.
+	// 'silent' (used by the visibilitychange listener) suppresses error alerts and
+	// skips entirely if an edit field is still focused, e.g. the tab was switched
+	// away from mid-edit; the manual sync button passes silent=false for feedback
+	function syncBoardFromRemote(silent)
+	{
+		var rem = NB.storage.getConfig().backups.agents[1];
+
+		if (! rem.enabled)
+		{
+			if (! silent)
+				alert('Remote backup is not configured. Set it up via Auto-backup first.');
+			return;
+		}
+
+		if (! NB.board)
+			return;
+
+		if (silent && $(document.activeElement).is('.edit'))
+			return;
+
+		$.ajax({
+			url: rem.conf.base + '/board/' + NB.board.id,
+			type: 'get',
+			headers: { 'X-Access-Token': rem.conf.auth },
+			dataType: 'text'
+		})
+		.done(function(text){
+
+			var data;
+
+			try { data = JSON.parse(text); }
+			catch (x) { data = null; }
+
+			if (data && checkImport(data))
+				data = null;
+
+			if (! data)
+			{
+				if (! silent) alert('Failed to parse remote board data.');
+				return;
+			}
+
+			var unchanged = (data.title == NB.board.title) &&
+			                 (JSON.stringify(data.lists) == JSON.stringify(NB.board.lists));
+
+			if (unchanged)
+				return;
+
+			// importBoard() rebuilds the board DOM from scratch (openBoard()), which
+			// otherwise resets both the column scroller and the page's own scroll
+			var scrollLeft = $('.wrap .board .lists').scrollLeft();
+			var scrollTop  = $(window).scrollTop();
+
+			importBoard(text, { skipRetitle: true, skipConfirm: true });
+
+			$('.wrap .board .lists').scrollLeft(scrollLeft);
+			$(window).scrollTop(scrollTop);
+		})
+		.fail(function(xhr){
+			if (! silent)
+				alert('Failed to fetch remote board: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
+		});
+	}
+
 	/*
 	 *
 	 */
@@ -5210,40 +5275,13 @@
 	});
 
 	$('.wrap').on('click', '.board .sync-board', function(){
-
-		var rem = NB.storage.getConfig().backups.agents[1];
-
-		if (! rem.enabled)
-		{
-			alert('Remote backup is not configured. Set it up via Auto-backup first.');
-			return false;
-		}
-
-		if (! NB.board)
-			return false;
-
-		// importBoard() rebuilds the board DOM from scratch (openBoard()), which
-		// otherwise resets both the column scroller and the page's own scroll -
-		// capture them now and restore once the rebuild is done
-		var scrollLeft = $('.wrap .board .lists').scrollLeft();
-		var scrollTop  = $(window).scrollTop();
-
-		$.ajax({
-			url: rem.conf.base + '/board/' + NB.board.id,
-			type: 'get',
-			headers: { 'X-Access-Token': rem.conf.auth },
-			dataType: 'text'
-		})
-		.done(function(text){
-			importBoard(text, { skipRetitle: true, skipConfirm: true });
-			$('.wrap .board .lists').scrollLeft(scrollLeft);
-			$(window).scrollTop(scrollTop);
-		})
-		.fail(function(xhr){
-			alert('Failed to fetch remote board: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
-		});
-
+		syncBoardFromRemote(false);
 		return false;
+	});
+
+	$(document).on('visibilitychange', function(){
+		if (document.visibilityState === 'visible')
+			syncBoardFromRemote(true);
 	});
 
 	$('.config .auto-backup').on('click', function(){
