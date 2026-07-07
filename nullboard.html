@@ -5222,6 +5222,12 @@
 		if (! NB.board)
 			return false;
 
+		// importBoard() rebuilds the board DOM from scratch (openBoard()), which
+		// otherwise resets both the column scroller and the page's own scroll -
+		// capture them now and restore once the rebuild is done
+		var scrollLeft = $('.wrap .board .lists').scrollLeft();
+		var scrollTop  = $(window).scrollTop();
+
 		$.ajax({
 			url: rem.conf.base + '/board/' + NB.board.id,
 			type: 'get',
@@ -5230,6 +5236,8 @@
 		})
 		.done(function(text){
 			importBoard(text, { skipRetitle: true, skipConfirm: true });
+			$('.wrap .board .lists').scrollLeft(scrollLeft);
+			$(window).scrollTop(scrollTop);
 		})
 		.fail(function(xhr){
 			alert('Failed to fetch remote board: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
