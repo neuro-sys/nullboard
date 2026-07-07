@@ -354,7 +354,8 @@
 	}
 
 	.board .menu a,
-	.board .ops  a {
+	.board .ops  a,
+	.board .head .sync-board {
 		color: #000000A0;
 		transition: color 200ms;
 	}
@@ -364,7 +365,8 @@
 	}
 
 	.board .menu a:hover,
-	.board .ops  a:hover {
+	.board .ops  a:hover,
+	.board .head .sync-board:hover {
 		color: #000;
 	}
 
@@ -1454,11 +1456,13 @@
 		background: linear-gradient(to right, #17171a00, #17171a 10px);
 	}
 
-	.theme-dark .board .menu a {
+	.theme-dark .board .menu a,
+	.theme-dark .board .head .sync-board {
 		color: #aaa;
 	}
 
-	.theme-dark .board .menu a:hover {
+	.theme-dark .board .menu a:hover,
+	.theme-dark .board .head .sync-board:hover {
 		color: #fc4;
 	}
 
