@@ -1571,6 +1571,8 @@
 			<a href=# class=imp-board>Import boards...</a>
 				<input class=imp-board-select type="file" accept=".nbx">
 
+			<a href=# class=imp-remote>Import Remote</a>
+
 			<a href=# class=auto-backup>Auto-backup...</a>
 
 			<div class="section ui-prefs break">
@@ -3254,7 +3256,7 @@
 		$('.wrap .board .head .text').click();
 	}
 
-	function saveBoard()
+	async function saveBoard()
 	{
 		var $board = $('.wrap .board');
 		var board = Object.assign(new Board(), NB.board); // id, revision & title
@@ -3272,6 +3274,10 @@
 				n.min = $note.hasClass('collapsed');
 			});
 		});
+
+		// pull whatever another device may have pushed since we last synced, so it
+		// lands in local history instead of being silently overwritten by this save
+		applyRemoteRevision( await autoSyncPull(), false );
 
 		NB.storage.saveBoard(board);
 		NB.board = board;
@@ -3512,6 +3518,7 @@
 
 		var index = NB.storage.getBoardIndex();
 		var msg, one, all = '';
+		var anyConflict = false;
 
 		for (var i=0; i<data.length; i++)
 		{
@@ -3524,13 +3531,18 @@
 				return false;
 			}
 
+			if (index.has(board.id))
+				anyConflict = true;
+
 			var title = board.title || '(untitled board)';
 			one =  `"${title}", ID ${board.id}, revision ${board.revision}`;
 			all += `    ID ${board.id}, revision ${board.revision} - "${title}"    \n`;
 		}
 
-		if (data.length == 1) msg = `Import a board called ${one} ?`;
-		else                  msg = `About to import the following boards:\n\n${all}\nProceed?`;
+		var warning = anyConflict ? ' This will OVERWRITE the existing board(s) with the same ID.' : '';
+
+		if (data.length == 1) msg = `Import a board called ${one} ?${warning}`;
+		else                  msg = `About to import the following boards:\n\n${all}\nProceed?${warning}`;
 
 		if (! confirm(msg))
 			return false;
@@ -3540,33 +3552,10 @@
 		for (var i=0; i<data.length; i++)
 		{
 			var board = data[i];
-			var check_title = true;
+			var check_title = ! index.has(board.id);
 
-			// check ID
-
-			if (index.has(board.id))
-			{
-				var which = (data.length == 1) ? "with the same ID" : board.id;
-
-				if (confirm(`Board ${which} already exists. Overwrite it?`) &&
-				    confirm(`OVERWRITE for sure?`))
-				{
-					console.log(`Import: ${board.id} (${board.title} - will overwrite existing one`);
-					check_title = false;
-				}
-				else
-				if (confirm(`Import the board under a new ID?`))
-				{
-					var new_id = +new Date();
-					console.log(`Import: ${board.id} (${board.title} - will import as ${new_id}`);
-					board.id = new_id;
-				}
-				else
-				{
-					console.log(`Import: ${board.id} (${board.title} - ID conflict, will not import`);
-					continue;
-				}
-			}
+			if (! check_title)
+				console.log(`Import: ${board.id} (${board.title}) - will overwrite existing one`);
 
 			if (check_title)
 			{
@@ -3590,6 +3579,78 @@
 		}
 
 		if (to_open) openBoard(to_open);
+	}
+
+	/*
+	 *	silent auto-sync with the remote backup, debounced per burst of user activity
+	 */
+	var autoSync = { promise: null, idleTimer: null }; // NB isn't assigned until later in the file
+
+	function fetchRemoteBoard(board_id)
+	{
+		var rem = NB.storage.getConfig().backups.agents[1];
+
+		if (! rem.enabled || ! board_id)
+			return Promise.resolve(null);
+
+		return new Promise(function(resolve){
+
+			$.ajax({
+				url: rem.conf.base + '/board/' + board_id,
+				type: 'get',
+				headers: { 'X-Access-Token': rem.conf.auth },
+				dataType: 'text'
+			})
+			.done(function(text){
+
+				var data;
+
+				try { data = JSON.parse(text); }
+				catch (x) { resolve(null); return; }
+
+				resolve( checkImport(data) ? null : data );
+			})
+			.fail(function(){ resolve(null); });
+		});
+	}
+
+	// merges a fetched remote board into local history; 'refresh' also redraws the open board
+	function applyRemoteRevision(remote, refresh)
+	{
+		if (! remote || remote._applied)
+			return false;
+
+		remote._applied = true; // never apply the same fetch twice, even if reused across saves
+
+		if (! NB.board || NB.board.id != remote.id)
+			return false;
+
+		var unchanged = (remote.title == NB.board.title) &&
+		                 (JSON.stringify(remote.lists) == JSON.stringify(NB.board.lists));
+
+		if (unchanged)
+			return false;
+
+		console.log(`Auto-import: remote content differs (revision ${remote.revision}, we were at ${NB.board.revision}) - pulling it in`);
+
+		NB.storage.saveBoard(remote);
+
+		if (refresh)
+			openBoard(remote.id);
+
+		return true;
+	}
+
+	// one remote fetch per burst of activity; reused by every caller until 10s of idle passes
+	function autoSyncPull()
+	{
+		clearTimeout(autoSync.idleTimer);
+		autoSync.idleTimer = setTimeout(function(){ autoSync.promise = null; }, 10000);
+
+		if (! autoSync.promise)
+			autoSync.promise = fetchRemoteBoard(NB.board ? NB.board.id : null);
+
+		return autoSync.promise;
 	}
 
 	/*
@@ -4640,6 +4701,10 @@
 		setRevealState(ev);
 	});
 
+	$(document).on('mousedown keydown', function(){
+		autoSyncPull().then(function(remote){ applyRemoteRevision(remote, true); });
+	});
+
 	$(document).on('keyup', function(ev){
 
 		var raw = ev.originalEvent;
@@ -4959,6 +5024,38 @@
 		$(this).attr('href', pack.blob);
 		$(this).attr('download', pack.file);
 		return true;
+	});
+
+	$('.config .imp-remote').on('click', function(){
+
+		var rem = NB.storage.getConfig().backups.agents[1];
+
+		if (! rem.enabled)
+		{
+			alert('Remote backup is not configured. Set it up via Auto-backup first.');
+			return false;
+		}
+
+		if (! NB.board)
+		{
+			alert('Open a board first.');
+			return false;
+		}
+
+		$.ajax({
+			url: rem.conf.base + '/board/' + NB.board.id,
+			type: 'get',
+			headers: { 'X-Access-Token': rem.conf.auth },
+			dataType: 'text'
+		})
+		.done(function(text){
+			importBoard(text);
+		})
+		.fail(function(xhr){
+			alert('Failed to fetch remote board: ' + (xhr.responseText || ('HTTP ' + xhr.status)));
+		});
+
+		return false;
 	});
 
 	$('.config .auto-backup').on('click', function(){
