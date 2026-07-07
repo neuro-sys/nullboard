@@ -274,6 +274,12 @@
 			margin: 0;
 			padding: 20px 8px;
 		}
+
+		/* let a column use the screen instead of sitting at its fixed --lw width
+		   with empty space beside it - still one column at a time, just full-width */
+		.board .list {
+			width: calc(100vw - 32px);
+		}
 	}
 
 	.crowded .board {
@@ -4459,10 +4465,21 @@
 		}
 		else
 		{
-			var max = Math.floor( (body_w - 40) / (list_w + 10) );
-			max = (max < 2) ? list_w : (list_w + 10) * max - 10;
-			$board.css('max-width', max + 'px');
 			$body.addClass('crowded');
+
+			if (body_w <= 700)
+			{
+				// phone-sized screen: let the board fill the viewport (see the matching
+				// @media rule) instead of constraining it to a computed number of
+				// full-width columns - there's only ever room for about one anyway
+				$board.css('max-width', '');
+			}
+			else
+			{
+				var max = Math.floor( (body_w - 40) / (list_w + 10) );
+				max = (max < 2) ? list_w : (list_w + 10) * max - 10;
+				$board.css('max-width', max + 'px');
+			}
 		}
 	}
 
@@ -4762,7 +4779,7 @@
 
 	function setListWidth(lw)
 	{
-		lw = lw.clamp(200, 400);
+		lw = lw.clamp(100, 400);
 
 		$('html').css('--lw', lw + '').addClass('lw-set');
 		updateVarsAndLayout();
